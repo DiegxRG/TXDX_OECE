@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Radar de Contrataciones Públicas | TxDx - OECE / SEACE</title>
+  <meta name="description" content="Radar inteligente de licitaciones públicas y oportunidades de contratación estatal TI para TxDx.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css?v=20260912-v7">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Command Header -->
+    <header class="top-header">
+      <div class="header-left">
+        <div class="brand-badge">
+          <span class="brand-logo-mark">TxDx</span>
+          <div class="brand-divider"></div>
+          <div class="brand-title-wrap">
+            <div class="brand-row">
+              <span class="brand-title">RADAR CONTRATACIONES</span>
+              <span class="status-live-pill">
+                <span class="live-dot"></span>
+                OECE &bull; SEACE v3
+              </span>
+            </div>
+            <span class="brand-subtitle">Inteligencia de oportunidades TI y servicios estratégicos</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <!-- Selector de Vista Tarjetas vs Tabla -->
+        <div class="view-toggle-group">
+          <button id="btnViewGrid" class="view-toggle-btn active" onclick="setViewMode('grid')" title="Vista de Tarjetas">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+            </svg>
+            <span>Tarjetas</span>
+          </button>
+          <button id="btnViewTable" class="view-toggle-btn" onclick="setViewMode('table')" title="Vista Tabla Densa">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+            <span>Tabla Densa</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button class="btn btn-secondary btn-icon-text" onclick="openAIConfigModal()" title="Configuración de motor IA">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+          </svg>
+          <span>Configurar IA</span>
+        </button>
+
+        <a href="/api/export/csv" class="btn btn-secondary btn-icon-text" title="Descargar oportunidades con al menos 48 horas en CSV">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Exportar</span>
+        </a>
+
+        <button id="btnScan" class="btn btn-primary btn-icon-text" onclick="triggerScan()">
+          <svg class="scan-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+          </svg>
+          <span>Escanear Portal</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Scan Progress Banner -->
+    <div id="bannerScan" class="banner-scan" style="display: none;">
+      <div class="banner-scan-inner">
+        <div class="scanner-pulse-box">
+          <span class="pulse-ring"></span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="m12 6 4 6h-8l4-6"></path>
+          </svg>
+        </div>
+        <div class="banner-scan-text">
+          <strong id="bannerText">Escaneo activo en tiempo real</strong>
+          <span id="scanDetail">Consultando progreso…</span>
+        </div>
+        <div class="scan-loader-bar">
+          <div id="scanProgress" class="scan-loader-progress"></div>
+        </div>
+        <button id="btnCloseBanner" class="btn-banner-close" onclick="document.getElementById('bannerScan').style.display='none'" title="Cerrar aviso" style="background:none; border:none; color:var(--text-muted, #888); cursor:pointer; font-size:18px; padding:0 8px; line-height:1;">&times;</button>
+      </div>
+    </div>
+
+    <!-- Main Content Container -->
+    <main class="main-body">
+      <!-- Executive KPI Cards -->
+      <section class="stats-overview" aria-label="Métricas Clave">
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <span class="stat-label">Oportunidades en Cartera</span>
+            <div class="stat-icon-wrap neutral">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="stat-card-body">
+            <div id="statTotal" class="stat-number">0</div>
+            <div id="statTotalSub" class="stat-caption">Base de datos sincronizada</div>
+          </div>
+        </div>
+
+        <div class="stat-card highlight-orange">
+          <div class="stat-card-header">
+            <span class="stat-label">Pipeline Estimado (PEN)</span>
+            <div class="stat-icon-wrap orange">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="1" x2="12" y2="23"></line>
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="stat-card-body">
+            <div id="statPipeline" class="stat-number stat-mono">S/ 0.00</div>
+            <div class="stat-caption">Monto en procesos identificados</div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <span class="stat-label">Ciberseguridad & Redes</span>
+            <div class="stat-icon-wrap blue">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="stat-card-body">
+            <div id="statTech" class="stat-number">0 proc.</div>
+            <div class="stat-caption">Núcleo tecnológico principal</div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <span class="stat-label">IA & Analítica de Datos</span>
+            <div class="stat-icon-wrap purple">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
+            </div>
+          </div>
+          <div class="stat-card-body">
+            <div id="statData" class="stat-number">0 proc.</div>
+            <div class="stat-caption">Automatización e inteligencia</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Control & Filter Bar -->
+      <section class="command-toolbar" aria-label="Controles de Filtrado">
+        <!-- Top Toolbar Row -->
+        <div class="toolbar-primary-row">
+          <div class="search-field-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="searchInput" placeholder="Buscar por entidad, objeto de contratación o tecnología..." oninput="handleSearch()">
+            <span class="kbd-shortcut" title="Presiona / para buscar">/</span>
+          </div>
+
+          <div class="filters-cluster">
+            <div class="select-wrapper">
+              <select id="statusFilter" class="filter-dropdown" onchange="loadOpportunities()">
+                <option value="ALL">Todos los Estados</option>
+                <option value="POR_EVALUAR">Por Evaluar</option>
+                <option value="INTERESANTE">Interesante</option>
+                <option value="EN_PREPARACION">En Preparación</option>
+                <option value="POSTULADO">Postulado</option>
+                <option value="DESCARTADO">Descartado</option>
+              </select>
+            </div>
+
+            <div class="select-wrapper">
+              <select id="scoreFilter" class="filter-dropdown" onchange="loadOpportunities()">
+                <option value="0">Cualquier Match %</option>
+                <option value="40">Match &ge; 40%</option>
+                <option value="60">Match &ge; 60%</option>
+                <option value="75">Alta Afinidad (&ge; 75%)</option>
+              </select>
+            </div>
+
+            <div class="select-wrapper">
+              <select id="windowFilter" class="filter-dropdown" onchange="applyWindowFilter()">
+                <option value="ALL">Cualquier Cierre</option>
+                <option value="SOON">⏳ Próximos cierres (2–5 días)</option>
+                <option value="OPEN">Plazo Abierto (&gt; 5 días)</option>
+              </select>
+            </div>
+
+            <div class="select-wrapper">
+              <select id="sortFilter" class="filter-dropdown" onchange="applySorting()">
+                <option value="MATCH_DESC">Mayor Afinidad (% Match)</option>
+                <option value="PRIORITY">Prioridad TxDx</option>
+                <option value="DAYS_ASC">Cierre Más Próximo</option>
+                <option value="AMOUNT_DESC">Mayor Monto (PEN)</option>
+                <option value="PUB_DESC">Más Recientes</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Secondary Toolbar Row -->
+        <div class="toolbar-secondary-row">
+          <!-- Filter Line Pills with Dynamic Counts -->
+          <div class="service-pills-bar" id="pillsContainer">
+            <button class="line-pill active" data-line="ALL" onclick="setLineFilter('ALL')">
+              <span>Todas</span>
+              <span class="pill-count" id="count-ALL">-</span>
+            </button>
+            <button class="line-pill" data-line="CIBERSEGURIDAD" onclick="setLineFilter('CIBERSEGURIDAD')">
+              <span class="pill-indicator ciber"></span>
+              <span>Ciberseguridad</span>
+              <span class="pill-count" id="count-CIBERSEGURIDAD">-</span>
+            </button>
+            <button class="line-pill" data-line="NETWORKING" onclick="setLineFilter('NETWORKING')">
+              <span class="pill-indicator net"></span>
+              <span>Networking</span>
+              <span class="pill-count" id="count-NETWORKING">-</span>
+            </button>
+            <button class="line-pill" data-line="IA_AUTOMATIZACION" onclick="setLineFilter('IA_AUTOMATIZACION')">
+              <span class="pill-indicator ia"></span>
+              <span>IA & Automatización</span>
+              <span class="pill-count" id="count-IA_AUTOMATIZACION">-</span>
+            </button>
+            <button class="line-pill" data-line="GESTION_DATOS" onclick="setLineFilter('GESTION_DATOS')">
+              <span class="pill-indicator datos"></span>
+              <span>Gestión de Datos</span>
+              <span class="pill-count" id="count-GESTION_DATOS">-</span>
+            </button>
+          </div>
+
+          <!-- Rules & Quick Toggles -->
+          <div class="rules-quick-actions">
+            <label class="toggle-switch-wrap" title="Filtra convocatorias en curso y procesos no cerrados oficialmente">
+              <input type="checkbox" id="soloVigentes" checked onchange="toggleVigentes()">
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Disponibles con al menos 48 horas</span>
+            </label>
+            <div class="rule-indicator-chip" title="Metodología de radar TxDx: Priorización comercial y técnica">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+              <span>Metodología TxDx</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Opportunities Render Area -->
+      <section class="results-viewport" aria-label="Listado de Convocatorias">
+        <!-- Conteo de resultados y metadata -->
+        <div class="results-header-bar">
+          <div class="results-summary">
+            Mostrando <strong id="visibleCount" class="stat-mono">0</strong> oportunidades encontradas
+          </div>
+          <div class="results-legend">
+            <span class="legend-item"><span class="dot-legend ok"></span> En regla TxDx</span>
+            <span class="legend-item"><span class="dot-legend soon"></span> Cierre próximo</span>
+            <span class="legend-item"><span class="dot-legend verified"></span> Bases analizadas</span>
+          </div>
+        </div>
+
+        <div id="opportunitiesContainer" class="opportunities-display-grid">
+          <!-- Inyectado dinámicamente: Tarjetas o Tabla -->
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal Configuración IA (Groq) -->
+  <div id="confModal" class="modal-backdrop" onclick="handleModalBackdropClick(event)">
+    <div class="modal-dialog">
+      <div class="modal-dialog-header">
+        <div class="modal-dialog-title-wrap">
+          <div class="modal-icon-badge">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+          </div>
+          <div>
+            <h3>Motor de Análisis con IA</h3>
+            <p>Extracción de Capítulo III de Bases Oficiales (Groq Llama-3)</p>
+          </div>
+        </div>
+        <button class="btn-icon-dismiss" onclick="closeAIConfigModal()" aria-label="Cerrar modal">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-dialog-body">
+        <div id="confStatusCard" class="status-card-notice">
+          <span class="spinner-small" id="confSpinner"></span>
+          <span id="confStatus">Verificando estado del motor IA...</span>
+        </div>
+
+        <div class="info-callout">
+          <p>
+            Con una clave gratuita de <strong>Groq Cloud</strong>, el analizador extrae con alta precisión:
+          </p>
+          <ul>
+            <li>Facturación mínima y experiencia requerida del postor.</li>
+            <li>Personal clave, perfiles requeridos y certificaciones indispensables.</li>
+            <li>Carta fianza, plazos, garantías y viabilidad técnica para TxDx.</li>
+          </ul>
+        </div>
+
+        <div class="form-group">
+          <label for="groqKeyInput">API Key de Groq (gsk_...)</label>
+          <div class="input-password-wrap">
+            <input id="groqKeyInput" type="password" placeholder="Pega aquí tu clave gsk_..." autocapitalize="off" autocomplete="off">
+            <button type="button" class="btn-toggle-pwd" onclick="togglePasswordVisibility('groqKeyInput', this)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+          <small class="form-help">Se almacena localmente de forma segura en tu entorno.</small>
+        </div>
+      </div>
+
+      <div class="modal-dialog-footer">
+        <button class="btn btn-secondary" onclick="closeAIConfigModal()">Cerrar</button>
+        <button class="btn btn-primary" onclick="saveGroqKey()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          Guardar Clave
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Drawer Lateral de Análisis de Bases -->
+  <div id="analisisModal" class="drawer-backdrop" onclick="handleOverlayClick(event)">
+    <div class="drawer-container">
+      <!-- Drawer Header -->
+      <div class="drawer-header">
+        <div class="drawer-title-block">
+          <div class="drawer-badge-row">
+            <span id="drawerBadge" class="line-badge">NETWORKING</span>
+            <span id="drawerScoreBadge" class="score-badge">MATCH 85%</span>
+          </div>
+          <h2 id="drawerTitle">Análisis de Bases Oficiales</h2>
+          <div class="drawer-entity-meta">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5"></path>
+            </svg>
+            <span id="drawerSub">Entidad: -</span>
+          </div>
+        </div>
+        <button class="btn-drawer-close" onclick="closeAnalisisDrawer()" aria-label="Cerrar panel">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Drawer Loading State -->
+      <div id="drawerLoading" class="drawer-loading-state" style="display: none;">
+        <div class="loading-ring-spinner"></div>
+        <h3>Descargando y Analizando Bases de SEACE...</h3>
+        <p>Extrayendo Capítulo III: Experiencia del postor, personal clave y certificaciones técnicas...</p>
+      </div>
+
+      <!-- Drawer Body -->
+      <div id="drawerBody" class="drawer-content-body">
+        <!-- Inyectado dinámicamente -->
+      </div>
+
+      <!-- Drawer Footer -->
+      <div class="drawer-footer">
+        <button class="btn btn-secondary" onclick="closeAnalisisDrawer()">Cerrar</button>
+        <div class="drawer-footer-actions">
+          <button id="drawerBtnCopy" class="btn btn-secondary btn-icon-text" onclick="copyAnalisisToClipboard()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copiar Ficha</span>
+          </button>
+          <a id="drawerBtnBases" href="#" target="_blank" class="btn btn-primary btn-icon-text">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Descargar PDF Oficial</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Hub -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script src="/js/app.js?v=20260912-v7"></script>
+</body>
+</html>

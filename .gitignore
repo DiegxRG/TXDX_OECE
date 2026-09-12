@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Environment and sensitive keys
+.env
+.env.*
+config/*_key.txt
+config/groq_key.txt
+config/gemini_key.txt
+
+# Databases and runtime data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Large inspection dumps & downloaded bases
+storage/bases/*
+!storage/bases/.gitkeep
+storage/seace_public_client.js
+storage/source_inspection.txt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
