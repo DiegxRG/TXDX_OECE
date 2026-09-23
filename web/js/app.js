@@ -8,8 +8,9 @@ let currentLine = 'ALL';
 let searchTimeout = null;
 let currentOps = [];
 let filteredOps = [];
-let currentView = 'grid'; // 'grid' | 'table'
+let currentView = 'table'; // Bandeja de decisión por defecto; tarjetas solo para exploración.
 let currentAnalisisData = null;
+let currentAnalisisOcid = null;
 let scanPollTimer = null;
 let scanPollBusy = false;
 let scanWasActive = false;
@@ -148,6 +149,25 @@ async function fetchStats() {
     const ia = (data.por_linea?.IA_AUTOMATIZACION || 0);
     const datos = (data.por_linea?.GESTION_DATOS || 0);
     if (statData) statData.innerText = `${ia + datos} proc.`;
+
+    const am = data.analisis_metrics || {};
+    const metricsEl = document.getElementById('analisisMetricsText');
+    if (metricsEl) {
+      const pm = am.por_modo || {};
+      const conc = am.concordancia_triaje || {};
+      const hasConc = conc.total ? `· Concordancia triaje↔completo: ${conc.porcentaje ?? '—'}% (${conc.coinciden}/${conc.total})` : '· Sin comparación triaje↔completo aún';
+      const tokens = am.total_tokens ? `${(am.total_tokens / 1000).toFixed(1)}k tokens` : '0 tokens';
+
+      const u = data.usage || {};
+      const uTotal = u.total ? (u.total.total || 0) : 0;
+      const uHoy = u.hoy ? (u.hoy.total || 0) : 0;
+      const uCalls = u.total ? (u.total.llamadas || 0) : 0;
+      const usageTxt = uTotal
+        ? `· Tokens LLM (global): <strong>${(uTotal / 1000).toFixed(1)}k</strong> (${uCalls} llamadas) · hoy <strong>${(uHoy / 1000).toFixed(1)}k</strong> (límite free ≈200k/día)`
+        : '· Sin consumo de tokens aún';
+
+      metricsEl.innerHTML = `Análisis de bases: <strong>${tokens}</strong> usados · ${pm.rapido || 0} triaje / ${pm.completo || 0} completo ${hasConc} ${usageTxt}`;
+    }
 
   } catch (e) {
     console.error('Error al obtener estadísticas:', e);
@@ -530,8 +550,9 @@ function renderDenseTable(ops, container) {
                 </td>
                 <td style="text-align: right;">
                   <div class="table-actions-cluster" style="justify-content: flex-end;">
-                    <button class="btn-mini-copy" onclick="copiarTextoDirecto(this, '${encodedBusqueda}')" title="Copiar término para SEACE">
-                      Copiar
+                    <a href="${op.seace_guide?.url_buscador || 'https://prod1.seace.gob.pe/'}" target="_blank" class="btn-mini-copy" title="Abrir SEACE para verificar el proceso">SEACE</a>
+                    <button class="btn-mini-copy ${op.seace_confirmado ? 'confirmed' : ''}" onclick="confirmarSEACE('${op.ocid}', ${!op.seace_confirmado}, this)" title="Registra una verificación manual del expediente en SEACE">
+                      ${op.seace_confirmado ? 'Confirmado' : 'Confirmar'}
                     </button>
                     ${op.url_bases ? `
                       <button class="btn-action-analisis ${op.analisis_bases ? 'analyzed' : ''}" onclick="openAnalisisDrawer('${op.ocid}', '${encodeURIComponent(displayTitle)}', '${encodeURIComponent(op.entidad)}', '${op.linea_servicio}', '${op.url_bases}', ${op.score})" title="Analizar Bases con IA">
@@ -632,7 +653,7 @@ async function pollScanStatus() {
     } else if (result) {
       const ok = result.status === 'SUCCESS';
       if (title) title.textContent = ok ? 'Escaneo finalizado' : result.status === 'ERROR' ? 'El escaneo falló' : 'Escaneo parcial';
-      if (detail) detail.textContent = result.error || `${result.terminos_completados || 0}/${result.terminos_total || 0} términos completados · ${result.total_releases_evaluados || 0} resultados revisados · ${result.duracion_segundos || 0} s. ${result.limite_tiempo ? 'Se alcanzó el límite de 3 minutos; se guardó lo revisado.' : ok ? 'Resultados actualizados.' : 'Algunas consultas fallaron; los resultados están incompletos.'}`;
+      if (detail) detail.textContent = result.error || `${result.terminos_completados || 0}/${result.terminos_total || 0} términos completados · ${result.total_releases_evaluados || 0} resultados revisados · ${result.duracion_segundos || 0} s. ${result.limite_tiempo ? 'Se alcanzó el límite de tiempo; se guardó lo revisado.' : ok ? 'Resultados actualizados.' : 'Algunas consultas fallaron; los resultados están incompletos.'}`;
       if (bar) bar.style.width = `${ok ? 100 : (p.queries_total ? 100 * p.queries_done / p.queries_total : 0)}%`;
     }
     if (scanWasActive && !active) {
@@ -660,12 +681,12 @@ async function triggerScan() {
   try {
     const res = await fetch('/api/scan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pages: 2 }), signal: AbortSignal.timeout(10000)
+      body: JSON.stringify({ pages: 2, seconds: 600 }), signal: AbortSignal.timeout(10000)
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     scanWasActive = true;
-    showToast(data.status === 'already_running' ? 'Ya hay un escaneo en ejecución.' : 'Escaneo iniciado: hasta 2 páginas por término.', 'info');
+    showToast(data.status === 'already_running' ? 'Ya hay un escaneo en ejecución.' : 'Escaneo iniciado: hasta 2 páginas por término, límite 10 minutos.', 'info');
     pollScanStatus();
   } catch (e) {
     showToast('No se pudo confirmar el inicio. Comprobando el estado del servidor.', 'info');
@@ -676,6 +697,69 @@ async function triggerScan() {
 // ==========================================================================
 // DRAWER DE ANÁLISIS DE BASES
 // ==========================================================================
+function modeBarHtml(activeModo, doneModo) {
+  const hint = doneModo === 'rapido'
+    ? '<span class="mode-hint">▶ Resultado actual: triaje rápido. Revisa garantía y anexos con el análisis completo.</span>'
+    : (doneModo === 'completo' ? '<span class="mode-hint">✓ Análisis completo.</span>' : '');
+  return `
+    <div class="analisis-mode-bar">
+      <button class="mode-btn ${activeModo === 'rapido' ? 'on' : ''}" onclick="startAnalisis('${currentAnalisisOcid}', 'rapido')">⚡ Triaje rápido</button>
+      <button class="mode-btn ${activeModo === 'completo' ? 'on' : ''}" onclick="startAnalisis('${currentAnalisisOcid}', 'completo')">🔍 Análisis completo</button>
+      ${hint}
+    </div>
+  `;
+}
+
+function renderAnalisisDrawer() {
+  const bodyEl = document.getElementById('drawerBody');
+  if (!bodyEl || !currentAnalisisData) return;
+  const d = currentAnalisisData;
+  bodyEl.innerHTML = modeBarHtml(d.modo || 'completo', d.modo || 'completo') + renderAnalisisContent(d);
+}
+
+async function startAnalisis(ocid, modo, metaOver = {}) {
+  const loadingEl = document.getElementById('drawerLoading');
+  const bodyEl = document.getElementById('drawerBody');
+  if (bodyEl) bodyEl.innerHTML = modeBarHtml(modo, null) + '<div class="analisis-card"><p style="color: var(--text-dim); font-size: 13px;">Procesando… consulta el estado más abajo.</p></div>';
+  if (loadingEl) loadingEl.style.display = 'flex';
+  try {
+    const start = await fetch(`/api/oportunidades/${encodeURIComponent(ocid)}/analizar?modo=${modo}`, { method: 'POST' });
+    let json = await start.json();
+    while (json.status === 'queued' || json.status === 'running') {
+      if (loadingEl && loadingEl.querySelector('p')) loadingEl.querySelector('p').textContent = json.detail || json.stage || 'Procesando bases…';
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      const poll = await fetch(`/api/oportunidades/${encodeURIComponent(ocid)}/analizar/estado`);
+      json = await poll.json();
+    }
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (bodyEl) {
+      if (json.data && json.data.success) {
+        currentAnalisisData = { ...json.data, ...metaOver };
+        renderAnalisisDrawer();
+        loadOpportunities();
+      } else {
+        bodyEl.innerHTML = modeBarHtml(modo, null) + `
+          <div class="analisis-card" style="border-color: #fca5a5; background: #fef2f2;">
+            <h4 style="color: #dc2626; margin-bottom: 6px;">⚠️ No se pudo procesar el PDF oficial</h4>
+            <p>${json.data?.error || json.detail || 'Ocurrió un inconveniente al descargar o leer las bases de contratación de SEACE.'}</p>
+            <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted);">Puedes abrir directamente el documento original con el botón "Descargar PDF Oficial".</p>
+          </div>
+        `;
+      }
+    }
+  } catch (e) {
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (bodyEl) {
+      bodyEl.innerHTML = modeBarHtml(modo, null) + `
+        <div class="analisis-card" style="border-color: #fca5a5; background: #fef2f2;">
+          <h4 style="color: #dc2626; margin-bottom: 6px;">Error de Conexión</h4>
+          <p>No se pudo conectar con el motor de análisis: ${e.message}</p>
+        </div>
+      `;
+    }
+  }
+}
+
 async function openAnalisisDrawer(ocid, encodedTitulo, encodedEntidad, lineaServicio, urlBases, score = 0) {
   const titulo = decodeURIComponent(encodedTitulo);
   const entidad = decodeURIComponent(encodedEntidad);
@@ -703,33 +787,21 @@ async function openAnalisisDrawer(ocid, encodedTitulo, encodedEntidad, lineaServ
     btnBases.href = urlBases || '#';
     btnBases.style.display = urlBases ? 'inline-flex' : 'none';
   }
-
-  if (bodyEl) bodyEl.innerHTML = '';
+  currentAnalisisOcid = ocid;
+  if (bodyEl) bodyEl.innerHTML = modeBarHtml('rapido', null);
   if (loadingEl) loadingEl.style.display = 'flex';
   if (modal) modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 
   try {
-    const res = await fetch(`/api/oportunidades/${encodeURIComponent(ocid)}/analizar`, {
-      method: 'POST'
-    });
-    const json = await res.json();
-    if (loadingEl) loadingEl.style.display = 'none';
-
-    if (json.data && json.data.success) {
-      currentAnalisisData = { ...json.data, titulo, entidad };
-      renderAnalisisContent(json.data);
-      loadOpportunities();
+    const estRes = await fetch(`/api/oportunidades/${encodeURIComponent(ocid)}/analizar/estado`);
+    const est = await estRes.json();
+    if (est.status === 'completed' && est.data && est.data.success) {
+      if (loadingEl) loadingEl.style.display = 'none';
+      currentAnalisisData = { ...est.data, titulo, entidad };
+      renderAnalisisDrawer();
     } else {
-      if (bodyEl) {
-        bodyEl.innerHTML = `
-          <div class="analisis-card" style="border-color: #fca5a5; background: #fef2f2;">
-            <h4 style="color: #dc2626; margin-bottom: 6px;">⚠️ No se pudo procesar el PDF oficial</h4>
-            <p>${json.data?.error || json.detail || 'Ocurrió un inconveniente al descargar o leer las bases de contratación de SEACE.'}</p>
-            <p style="margin-top: 10px; font-size: 12px; color: var(--text-muted);">Puedes abrir directamente el documento original con el botón "Descargar PDF Oficial".</p>
-          </div>
-        `;
-      }
+      await startAnalisis(ocid, 'rapido', { titulo, entidad });
     }
   } catch (e) {
     if (loadingEl) loadingEl.style.display = 'none';
@@ -745,8 +817,6 @@ async function openAnalisisDrawer(ocid, encodedTitulo, encodedEntidad, lineaServ
 }
 
 function renderAnalisisContent(data) {
-  const bodyEl = document.getElementById('drawerBody');
-  if (!bodyEl) return;
   const fact = data.factibilidad_txdx || {};
 
   const certsHtml = (data.certificaciones_requeridas || []).length > 0
@@ -762,8 +832,22 @@ function renderAnalisisContent(data) {
     ? (parseFloat(String(data.garantia).replace(/[^0-9.]/g, '')) || 0)
     : 0;
   const garantiaFuera = garantiaMonto >= 1000000;
+  const modo = data.modo || 'completo';
+  const conc = data.concordancia_triaje || null;
+  const concHtml = conc ? `
+    <div class="analisis-card" style="border-color: ${conc.match_nivel ? '#a7f3d0' : '#fca5a5'}; background: ${conc.match_nivel ? '#ecfdf5' : '#fef2f2'};">
+      <div class="analisis-card-title" style="color: ${conc.match_nivel ? '#059669' : '#dc2626'};">Concordancia triaje ↔ completo</div>
+      <p style="font-size: 13px;">
+        ${conc.match_nivel ? 'El triaje rápido coincidió con el análisis completo.' : 'El triaje se desvió del análisis completo (nivel distinto).'}
+        Score previo ${conc.score_previo} → ${conc.score_completo} (delta ${conc.score_delta >= 0 ? '+' : ''}${conc.score_delta}).
+      </p>
+    </div>
+  ` : '';
 
-  bodyEl.innerHTML = `
+  return `
+    <!-- Modo de análisis -->
+    <div class="analisis-mode-pill mode-${modo}">${modo === 'rapido' ? '⚡ TRIAGE RÁPIDO' : '🔍 ANÁLISIS COMPLETO'}</div>
+
     <!-- Veredicto de Factibilidad TxDx -->
     <div class="factibilidad-banner" style="background: ${fact.color === '#059669' ? '#ecfdf5' : '#fff7ed'}; border: 1px solid ${fact.color === '#059669' ? '#a7f3d0' : '#fed7aa'};">
       <div class="factibilidad-banner-header" style="color: ${fact.color || 'var(--txdx-orange)'};">
@@ -826,8 +910,11 @@ function renderAnalisisContent(data) {
       </div>
     </div>
 
-    <div style="font-size: 11px; color: var(--text-dim); text-align: right; margin-top: 4px;">
-      Páginas oficiales procesadas: ${data.total_paginas || 0} páginas extraídas de SEACE.
+${concHtml}
+
+    <div style="font-size: 11px; color: var(--text-dim); text-align: right; margin-top: 4px; line-height: 1.6;">
+      Documento: ${data.total_paginas || 0} páginas. ${data.evidencia?.paginas_revisadas?.length ? `Requisitos revisados en págs. ${data.evidencia.paginas_revisadas.join(', ')}.` : 'Revisa el PDF oficial antes de postular.'}
+      <br/>${data.motor || ''} · ${data.usage_tokens_total != null ? data.usage_tokens_total + ' tokens' : 'motor local'}. ${data.sugerencia || ''}
     </div>
   `;
 }
@@ -953,4 +1040,19 @@ async function saveGroqKey() {
   } catch (e) {
     showToast('Error de conexión al guardar clave', 'info');
   }
+}
+
+async function confirmarSEACE(ocid, confirmado, button) {
+  try {
+    const res = await fetch(`/api/oportunidades/${encodeURIComponent(ocid)}/seace-confirmacion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmado })
+    });
+    if (!res.ok) throw new Error('No se pudo guardar la verificación');
+    if (button) {
+      button.textContent = confirmado ? 'Confirmado en SEACE' : 'Confirmar en SEACE';
+      button.classList.toggle('confirmed', confirmado);
+      button.onclick = () => confirmarSEACE(ocid, !confirmado, button);
+    }
+    showToast(confirmado ? 'Proceso confirmado manualmente en SEACE' : 'Confirmación SEACE retirada', 'success');
+  } catch (e) { showToast('No se pudo guardar la verificación SEACE', 'info'); }
 }

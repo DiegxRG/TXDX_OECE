@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/styles.css?v=20260912-v7">
+  <link rel="stylesheet" href="/css/styles.css?v=20260915-v8">
 </head>
 <body>
   <div class="app-layout">
@@ -34,7 +34,7 @@
       <div class="header-center">
         <!-- Selector de Vista Tarjetas vs Tabla -->
         <div class="view-toggle-group">
-          <button id="btnViewGrid" class="view-toggle-btn active" onclick="setViewMode('grid')" title="Vista de Tarjetas">
+          <button id="btnViewGrid" class="view-toggle-btn" onclick="setViewMode('grid')" title="Vista de Tarjetas">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
               <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
@@ -43,7 +43,7 @@
             </svg>
             <span>Tarjetas</span>
           </button>
-          <button id="btnViewTable" class="view-toggle-btn" onclick="setViewMode('table')" title="Vista Tabla Densa">
+          <button id="btnViewTable" class="view-toggle-btn active" onclick="setViewMode('table')" title="Vista Tabla Densa">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="3" y1="6" x2="21" y2="6"></line>
               <line x1="3" y1="12" x2="21" y2="12"></line>
@@ -171,6 +171,10 @@
           </div>
         </div>
       </section>
+
+      <div class="analisis-metrics-strip">
+        <span id="analisisMetricsText">Análisis de bases: sin datos todavía. Analiza una ficha para medir costos y precisión.</span>
+      </div>
 
       <!-- Control & Filter Bar -->
       <section class="command-toolbar" aria-label="Controles de Filtrado">
@@ -430,6 +434,6 @@
   <!-- Toast Notification Hub -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-  <script src="/js/app.js?v=20260912-v7"></script>
+  <script src="/js/app.js?v=20260922-v9"></script>
 </body>
 </html>

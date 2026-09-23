@@ -16,7 +16,10 @@ from db.database import (
     get_stats,
     get_connection,
     save_analisis_bases,
-    get_analisis_bases
+    get_analisis_bases,
+    set_seace_confirmado,
+    get_analisis_metrics,
+    get_usage_summary,
 )
 from engine.estado import PERU_TZ
 from engine.scanner import RadarScanner
@@ -35,6 +38,9 @@ is_scanning = False
 last_scan_result = None
 scan_progress = {}
 scan_started = None
+analysis_lock = threading.Lock()
+analysis_jobs = {}
+ANALYSIS_VERSION = 3
 
 class UpdateEstadoRequest(BaseModel):
     estado_interno: str
@@ -42,6 +48,7 @@ class UpdateEstadoRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     pages: int = Field(default=2, ge=1, le=5)
+    seconds: int = Field(default=600, ge=30, le=3600)
     start_page: int = Field(default=1, ge=1, le=1)
     year: str = Field(default_factory=lambda: str(datetime.now(PERU_TZ).year))
     query: Optional[str] = None
@@ -54,7 +61,10 @@ class GeminiKeyRequest(BaseModel):
 class GroqKeyRequest(BaseModel):
     api_key: str
 
-def _background_scan_worker(pages: int = 2, start_page: int = 1, year: Optional[str] = None, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
+class SeaceConfirmationRequest(BaseModel):
+    confirmado: bool
+
+def _background_scan_worker(pages: int = 2, seconds: int = 600, start_page: int = 1, year: Optional[str] = None, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
     global is_scanning, last_scan_result
     def publish(state):
         global scan_progress
@@ -65,7 +75,7 @@ def _background_scan_worker(pages: int = 2, start_page: int = 1, year: Optional[
         scanner = RadarScanner()
         result = scanner.run_smart_scan(
             year=year, query=query, start_date=start_date, end_date=end_date,
-            max_pages_per_query=pages, progress=publish, max_seconds=180)
+            max_pages_per_query=pages, progress=publish, max_seconds=seconds)
     except Exception as e:
         result = {"status": "ERROR", "error": str(e)}
     finally:
@@ -121,6 +131,8 @@ def api_get_stats():
     stats["gemini_configured"] = bool(key)
     groq = get_groq_key()
     stats["groq_configured"] = bool(groq)
+    stats["analisis_metrics"] = get_analisis_metrics()
+    stats["usage"] = get_usage_summary()
     return stats
 
 @app.get("/api/oportunidades")
@@ -145,6 +157,9 @@ def api_get_oportunidades(
         max_monto=max_monto
     )
     for op in ops:
+        # No mostrar como vigente una ficha generada por un extractor anterior.
+        if op.get("analisis_bases") and op["analisis_bases"].get("analysis_version") != ANALYSIS_VERSION:
+            op["analisis_bases"] = None
         titulo = op.get("titulo") or ""
         y_m = re.search(r'-(\d{4})-', titulo)
         year = y_m.group(1) if y_m else ((op.get("fecha_publicacion") or "")[:4] or str(datetime.now(PERU_TZ).year))
@@ -185,6 +200,12 @@ def api_update_estado(ocid: str, req: UpdateEstadoRequest):
         raise HTTPException(status_code=404, detail="Oportunidad no encontrada")
     return {"status": "ok", "ocid": ocid, "nuevo_estado": req.estado_interno}
 
+@app.post("/api/oportunidades/{ocid}/seace-confirmacion")
+def api_set_seace_confirmacion(ocid: str, req: SeaceConfirmationRequest):
+    if not set_seace_confirmado(ocid, req.confirmado):
+        raise HTTPException(status_code=404, detail="Oportunidad no encontrada")
+    return {"status": "ok", "ocid": ocid, "confirmado": req.confirmado}
+
 @app.get("/api/oportunidades/{ocid}/analisis")
 def api_get_analisis(ocid: str):
     analisis = get_analisis_bases(ocid)
@@ -192,13 +213,62 @@ def api_get_analisis(ocid: str):
         raise HTTPException(status_code=404, detail="Análisis no encontrado para esta oportunidad")
     return analisis
 
-@app.post("/api/oportunidades/{ocid}/analizar")
-def api_analizar_oportunidad(ocid: str):
-    # 1. Verificar si ya fue analizado antes
+def _compute_concordancia(prev: dict, new: dict) -> Optional[dict]:
+    if not prev or not new:
+        return None
+    try:
+        f1 = prev.get("factibilidad_txdx") or {}
+        f2 = new.get("factibilidad_txdx") or {}
+        s1 = float(f1.get("score") or 0)
+        s2 = float(f2.get("score") or 0)
+        return {
+            "modo_previo": prev.get("modo", "rapido"),
+            "match_nivel": bool(f1.get("nivel") == f2.get("nivel")),
+            "score_previo": s1,
+            "score_completo": s2,
+            "score_delta": round(s2 - s1, 1),
+        }
+    except Exception:
+        return None
+
+
+def _run_analysis_job(ocid: str, op: dict, modo: str = "completo"):
+    def progress(stage: str, detail: str = ""):
+        with analysis_lock:
+            analysis_jobs[ocid] = {"status": "running", "stage": stage, "detail": detail}
+    try:
+        prev = get_analisis_bases(ocid)
+        result = BasesAnalyzer().analyze_document(ocid=ocid, url_bases=op["url_bases"], meta=op, progress=progress, modo=modo)
+        result["analysis_version"] = ANALYSIS_VERSION
+        result["modo"] = modo
+        if result.get("success") and modo == "completo" and prev and prev.get("modo") == "rapido" and prev.get("success"):
+            conc = _compute_concordancia(prev, result)
+            if conc:
+                result["concordancia_triaje"] = conc
+        if result.get("success"):
+            save_analisis_bases(ocid, result)
+        with analysis_lock:
+            analysis_jobs[ocid] = {"status": "completed" if result.get("success") else "error", "data": result}
+    except Exception as exc:
+        with analysis_lock:
+            analysis_jobs[ocid] = {"status": "error", "data": {"success": False, "error": str(exc), "ocid": ocid}}
+
+@app.get("/api/oportunidades/{ocid}/analizar/estado")
+def api_estado_analisis(ocid: str):
     cached = get_analisis_bases(ocid)
-    if cached and cached.get("success"):
+    if cached and cached.get("success") and cached.get("analysis_version") == ANALYSIS_VERSION:
+        return {"status": "completed", "data": cached}
+    with analysis_lock:
+        return analysis_jobs.get(ocid, {"status": "idle"})
+
+@app.post("/api/oportunidades/{ocid}/analizar")
+def api_analizar_oportunidad(ocid: str, modo: str = Query("completo")):
+    modo = modo if modo in ("rapido", "completo") else "completo"
+    # 1. Verificar si ya fue analizado antes en el mismo modo
+    cached = get_analisis_bases(ocid)
+    if cached and cached.get("success") and cached.get("analysis_version") == ANALYSIS_VERSION and cached.get("modo") == modo:
         return {"status": "cached", "data": cached}
-        
+
     # 2. Buscar datos de la oportunidad
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -211,15 +281,15 @@ def api_analizar_oportunidad(ocid: str):
     url_bases = op.get("url_bases")
     if not url_bases:
         raise HTTPException(status_code=400, detail="Esta oportunidad no cuenta con URL directa de Bases disponible")
-        
-    # 3. Analizar PDF
-    analyzer = BasesAnalyzer()
-    resultado = analyzer.analyze_document(ocid=ocid, url_bases=url_bases, meta=op)
-    
-    if resultado.get("success"):
-        save_analisis_bases(ocid, resultado)
-        
-    return {"status": "analyzed", "data": resultado}
+
+    # Los archivos grandes se procesan fuera de la petición HTTP. El navegador consulta progreso.
+    with analysis_lock:
+        current = analysis_jobs.get(ocid)
+        if current and current.get("status") == "running":
+            return current
+        analysis_jobs[ocid] = {"status": "queued", "stage": "En cola", "detail": f"Preparando análisis {'rápido' if modo == 'rapido' else 'completo'} de bases"}
+    threading.Thread(target=_run_analysis_job, args=(ocid, op, modo), daemon=True).start()
+    return {"status": "queued", "stage": "En cola", "detail": "El análisis continuará en segundo plano"}
 
 @app.post("/api/scan")
 def api_trigger_scan(req: ScanRequest, background_tasks: BackgroundTasks):
@@ -235,6 +305,7 @@ def api_trigger_scan(req: ScanRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(
         _background_scan_worker,
         pages=req.pages,
+        seconds=req.seconds,
         start_page=req.start_page,
         year=req.year,
         query=req.query,

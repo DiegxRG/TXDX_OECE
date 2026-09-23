@@ -1,9 +1,13 @@
+import json
+import os
+import re
+import unicodedata
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List, Set, Callable
 
 from engine.oece_client import OECEClient
-from engine.classifier import TxDxClassifier
+from engine.classifier import CONFIG_PATH, TxDxClassifier
 from engine.estado import extraer_estado_official, parse_fecha, PERU_TZ, ESTADOS_CERRADOS
 from engine.prioridad import evaluar as evaluar_prioridad
 from db.database import upsert_oportunidad, record_scan_history
@@ -30,6 +34,106 @@ CORE_SEARCH_QUERIES = {
         "data warehouse", "etl", "big data", "power bi", "gobierno de datos"
     ]
 }
+
+# Frases que aparecen en objetos SEACE/contratación pública para servicios que
+# TxDx sí presta pero que no coinciden con las keywords comerciales del catálogo.
+CATALOG_BROAD_PHRASES = {
+    "CIBERSEGURIDAD": [
+        "seguridad de redes",
+        "proteccion de datos",
+        "seguridad de los sistemas de informacion",
+        "sistemas de seguridad informatica",
+        "servicio de seguridad informatica",
+        "equipos de seguridad perimetral",
+        "control de acceso a la red",
+        "auditoria de seguridad",
+        "gestion de incidentes de seguridad",
+        "continuidad del negocio",
+        "recuperacion ante desastres",
+        "encriptacion",
+        "seguridad informatica y firewalls"
+    ],
+    "NETWORKING": [
+        "infraestructura de telecomunicaciones",
+        "servicios de telecomunicaciones",
+        "servicio de conectividad",
+        "conectividad a internet",
+        "servicio de internet",
+        "red local",
+        "red corporativa",
+        "redes informaticas",
+        "mantenimiento de red",
+        "soporte de red",
+        "equipos de red",
+        "equipos de comunicacion",
+        "centro de operaciones de red",
+        "servidores de aplicaciones",
+        "infraestructura tecnologica",
+        "virtualizacion de servidores",
+        "actualizacion de equipos de red",
+        "servicio de backup",
+        "cableado de red",
+        "red de area local"
+    ],
+    "IA_AUTOMATIZACION": [
+        "software a medida",
+        "desarrollo de aplicaciones web",
+        "desarrollo de sistemas",
+        "desarrollo de software",
+        "sistemas informaticos",
+        "modernizacion tecnologica",
+        "gobierno digital",
+        "simplificacion de procesos",
+        "gestion de tramites digitales",
+        "tramite documentario",
+        "interoperabilidad de sistemas",
+        "robotizacion de procesos",
+        "digitalizacion",
+        "mejora de procesos de ti"
+    ],
+    "GESTION_DATOS": [
+        "analisis de datos",
+        "explotacion de la informacion",
+        "informacion gerencial",
+        "gestion de la informacion",
+        "cuadro de mando",
+        "indicadores de gestion",
+        "modelamiento de datos",
+        "calidad de datos",
+        "gestion integral de la informacion",
+        "sistemas de informacion gerencial"
+    ]
+}
+
+def _normalize_query(s: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", s)
+    return re.sub(r"[^a-z0-9\s]", " ", "".join(
+        c for c in nfkd if not unicodedata.combining(c)).lower()).strip()
+
+def build_search_queries_from_catalog() -> Dict[str, List[str]]:
+    """Genera las consultas de descubrimiento a partir del catálogo comercial
+    estable de TxDx (txdx_services.json): keywords positivas + frases de
+    contratación pública, unidas a las consultas base consolidadas."""
+    if not os.path.exists(CONFIG_PATH):
+        return dict(CORE_SEARCH_QUERIES)
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    queries: Dict[str, List[str]] = {}
+    for line_key, line_data in cfg.get("service_lines", {}).items():
+        acc = list(CORE_SEARCH_QUERIES.get(line_key, []))
+        seen = {_normalize_query(q) for q in acc}
+        for kw in line_data.get("positive_keywords", []):
+            n = _normalize_query(kw)
+            if n and len(n) >= 3 and n not in seen:
+                seen.add(n)
+                acc.append(kw)
+        for broad in CATALOG_BROAD_PHRASES.get(line_key, []):
+            nb = _normalize_query(broad)
+            if nb and len(nb) >= 3 and nb not in seen:
+                seen.add(nb)
+                acc.append(broad)
+        queries[line_key] = acc
+    return queries
 
 def pick_tipo(matched_keywords: List[str]) -> str:
     """Elige el término de búsqueda rápida (objeto SEACE) a partir de las keywords coincidentes."""
@@ -81,9 +185,9 @@ class RadarScanner:
             queries_to_run = [query.strip()]
             print(f"[RadarScanner] Modo búsqueda puntual para: '{query}' (Año: {year})...")
         else:
-            # Lista completa de términos clave de las 4 líneas de servicio TxDx
+            # Consultas de descubrimiento: catálogo TzDx + frases de contratación pública.
             queries_to_run = []
-            for line_queries in CORE_SEARCH_QUERIES.values():
+            for line_queries in build_search_queries_from_catalog().values():
                 queries_to_run.extend(line_queries)
             print(f"[RadarScanner] Iniciando escaneo dirigido: {len(queries_to_run)} términos clave para año {year}...")
 
@@ -103,6 +207,7 @@ class RadarScanner:
             if time.monotonic() - start_time >= max_seconds:
                 timed_out = True
                 break
+            ultima_pagina_query = False
             for page in range(1, max_pages_per_query + 1):
                 if time.monotonic() - start_time >= max_seconds:
                     timed_out = True
@@ -132,6 +237,10 @@ class RadarScanner:
                 results = search_res.get("results", [])
                 if not results:
                     break
+
+                pagina = search_res.get("pagination") or {}
+                if not pagina.get("has_next", False):
+                    ultima_pagina_query = True
 
                 for item in results:
                     if time.monotonic() - start_time >= max_seconds:
@@ -275,7 +384,7 @@ class RadarScanner:
 
                 # Pausa ligera de cortesía con el servidor OECE
                 report("Página revisada", q, page)
-                if timed_out or ("next" in search_res and not search_res["next"]):
+                if timed_out or ultima_pagina_query:
                     break
                 time.sleep(0.2)
             if timed_out:
@@ -316,8 +425,8 @@ class RadarScanner:
         print(f"[RadarScanner] Finalizado en {duracion}s. Evaluados: {total_evaluados}. Nuevas: {nuevas_oportunidades}.")
         return summary
 
-    def run_scan(self, max_pages: int = 25, start_page: int = 1, year: Optional[str] = None) -> Dict[str, Any]:
+    def run_scan(self, max_pages: int = 30, start_page: int = 1, year: Optional[str] = None) -> Dict[str, Any]:
         """
         Ejecuta el escáner inteligente por defecto aprovechando los filtros y motor de búsqueda de OECE.
         """
-        return self.run_smart_scan(year=year, max_pages_per_query=max(1, max_pages // 15))
+        return self.run_smart_scan(year=year, max_pages_per_query=max(2, max_pages // 15))

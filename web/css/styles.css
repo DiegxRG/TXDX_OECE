@@ -483,6 +483,20 @@ button, input, select {
   margin-top: 2px;
 }
 
+.analisis-metrics-strip {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 9px 16px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.analisis-metrics-strip strong {
+  color: var(--text-secondary);
+}
+
 /* ==========================================================================
    COMMAND TOOLBAR & FILTERS
    ========================================================================== */
@@ -1267,6 +1281,25 @@ button, input, select {
   white-space: nowrap;
 }
 
+.btn-mini-copy {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-mini-copy:hover { border-color: var(--border-strong); color: var(--text-main); }
+.btn-mini-copy.confirmed { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+
 /* ==========================================================================
    EMPTY STATE
    ========================================================================== */
@@ -1635,6 +1668,62 @@ button, input, select {
   font-size: 11px;
   font-weight: 700;
   margin: 2px 4px 2px 0;
+}
+
+.analisis-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.mode-btn:hover {
+  border-color: var(--txdx-orange);
+  color: var(--txdx-orange);
+}
+
+.mode-btn.on {
+  background-color: var(--txdx-orange-subtle);
+  border-color: var(--txdx-orange);
+  color: var(--txdx-orange);
+}
+
+.mode-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.analisis-mode-pill {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.analisis-mode-pill.mode-rapido {
+  background-color: var(--ia-bg);
+  color: var(--ia-color);
+  border: 1px solid var(--ia-border);
+}
+
+.analisis-mode-pill.mode-completo {
+  background-color: var(--txdx-orange-subtle);
+  color: var(--txdx-orange);
+  border: 1px solid var(--txdx-orange);
 }
 
 .drawer-footer {

@@ -67,6 +67,20 @@ def init_db():
             detalle                    TEXT
         );
         """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usage_tokens (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider           TEXT NOT NULL DEFAULT 'groq',
+            model              TEXT,
+            prompt_tokens      INTEGER DEFAULT 0,
+            completion_tokens  INTEGER DEFAULT 0,
+            ocid               TEXT,
+            modo               TEXT,
+            created_at         TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_tokens(created_at);")
         
         # Indices for rapid querying
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oportunidades_linea ON oportunidades(linea_servicio);")
@@ -91,6 +105,8 @@ def init_db():
             ("ventana", "TEXT"),
             ("fecha_detectada", "TEXT"),
             ("fecha_revisada", "TEXT"),
+            ("seace_confirmado", "INTEGER DEFAULT 0"),
+            ("seace_confirmado_at", "TEXT"),
         ]:
             if col not in columns:
                 cursor.execute(f"ALTER TABLE oportunidades ADD COLUMN {col} {ddl};")
@@ -295,6 +311,17 @@ def update_estado_oportunidad(ocid: str, nuevo_estado: str, notas: Optional[str]
         conn.commit()
         return cursor.rowcount > 0
 
+def set_seace_confirmado(ocid: str, confirmado: bool) -> bool:
+    """Registra la verificación humana en SEACE sin alterar la información OECE."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat() if confirmado else None
+        cursor.execute(
+            "UPDATE oportunidades SET seace_confirmado = ?, seace_confirmado_at = ?, updated_at = ? WHERE ocid = ?",
+            (1 if confirmado else 0, now, datetime.now().isoformat(), ocid),
+        )
+        return cursor.rowcount > 0
+
 def get_stats() -> Dict[str, Any]:
     """Estadísticas sobre oportunidades VIGENTES según metodología TxDx."""
     with get_connection() as conn:
@@ -364,6 +391,80 @@ def get_analisis_bases(ocid: str) -> Optional[Dict[str, Any]]:
         if row and row["analisis_bases"]:
             return json.loads(row["analisis_bases"])
         return None
+
+def record_usage(provider: str, model: str, prompt_tokens: int, completion_tokens: int,
+                 ocid: Optional[str] = None, modo: Optional[str] = None) -> None:
+    """Registra tokens consumidos en una llamada LLM (Groq/Gemini). Acumuló por análisis y por día."""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO usage_tokens (provider, model, prompt_tokens, completion_tokens, ocid, modo) VALUES (?, ?, ?, ?, ?, ?);",
+                (provider, model, int(prompt_tokens or 0), int(completion_tokens or 0), ocid, modo))
+    except Exception:
+        pass
+
+def get_usage_summary() -> Dict[str, Any]:
+    """Totales globales de consumo de tokens LLM: acumulado, hoy y por modelo."""
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT provider, model, SUM(prompt_tokens) p, SUM(completion_tokens) c, COUNT(*) n FROM usage_tokens GROUP BY model ORDER BY (SUM(prompt_tokens)+SUM(completion_tokens)) DESC;")
+        rows = cursor.fetchall()
+        cursor.execute("SELECT SUM(prompt_tokens) p, SUM(completion_tokens) c, COUNT(*) n FROM usage_tokens;")
+        total = cursor.fetchone()
+        cursor.execute("SELECT SUM(prompt_tokens) p, SUM(completion_tokens) c, COUNT(*) n FROM usage_tokens WHERE DATE(created_at) = ?;", (hoy,))
+        today = cursor.fetchone()
+
+    por_modelo = [{
+        "provider": r["provider"], "model": r["model"],
+        "prompt_tokens": r["p"] or 0, "completion_tokens": r["c"] or 0,
+        "total": (r["p"] or 0) + (r["c"] or 0), "llamadas": r["n"],
+    } for r in rows]
+
+    def _agg(r):
+        return {"prompt_tokens": (r["p"] or 0) if r else 0,
+                "completion_tokens": (r["c"] or 0) if r else 0,
+                "total": ((r["p"] or 0) + (r["c"] or 0)) if r else 0,
+                "llamadas": (r["n"] or 0) if r else 0}
+
+    return {"total": _agg(total), "hoy": _agg(today), "por_modelo": por_modelo}
+
+def get_analisis_metrics() -> Dict[str, Any]:
+    """Métricas de economía y calidad del análisis: tokens usados, modos y concordancia triaje↔completo."""
+    total_tokens = 0
+    por_modo: Dict[str, int] = {}
+    conc_total = 0
+    conc_match = 0
+    conc_detalle = []
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT ocid, analisis_bases FROM oportunidades WHERE analisis_bases IS NOT NULL;")
+        for row in cursor.fetchall():
+            try:
+                a = json.loads(row["analisis_bases"] or "null")
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(a, dict):
+                continue
+            total_tokens += int(a.get("usage_tokens_total") or 0)
+            m = a.get("modo") or "desconocido"
+            por_modo[m] = por_modo.get(m, 0) + 1
+            c = a.get("concordancia_triaje")
+            if isinstance(c, dict):
+                conc_total += 1
+                if c.get("match_nivel"):
+                    conc_match += 1
+                conc_detalle.append({"ocid": row["ocid"], **c})
+    return {
+        "total_tokens": total_tokens,
+        "por_modo": por_modo,
+        "concordancia_triaje": {
+            "total": conc_total,
+            "coinciden": conc_match,
+            "porcentaje": round(100 * conc_match / conc_total, 1) if conc_total else None,
+        },
+        "detalle": conc_detalle[-20:],
+    }
 
 # Auto-initialize DB on import
 init_db()
